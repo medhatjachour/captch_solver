@@ -185,7 +185,12 @@ def solve_captcha_and_submit(website_url, username, email, password):
         driver.find_element(By.XPATH, "//input[@placeholder='Enter password here']").send_keys(password)
         driver.find_element(By.XPATH, "//input[@placeholder='Repeat password']").send_keys(password)
         driver.find_element(By.XPATH, "//button[text()='Сontinue']").click()
+        time.sleep(2)
+        driver.find_element(By.XPATH, "//div[span[text()=\"I'm not a robot\"]]").click()
+
         time.sleep(10)
+
+
 
         # Solve the slider CAPTCHA
         solver = CaptchaSolver(driver)
