@@ -10,6 +10,7 @@ import os
 import cv2
 import numpy as np
 from PIL import Image
+import random
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
@@ -21,6 +22,9 @@ os.makedirs(CAPTCHA_IMAGE_DIR, exist_ok=True)
 class CaptchaSolver:
     def __init__(self, driver):
         self.driver = driver
+
+
+
 
     def solve_slider_captcha(self):
         """
@@ -69,7 +73,9 @@ class CaptchaSolver:
 
             # Calculate the offset to move the slider
             offset_x = max_loc[0] - 50  # Adjust based on the initial position of the puzzle piece
-            logging.info(f"Moving slider by {offset_x} pixels.")
+            buffer = random.randint(5, 15)  # Add a random buffer to fine-tune the offset
+            offset_x += buffer  # Fine-tune the offset
+            logging.info(f"Moving slider by {offset_x} pixels (including buffer).")
 
             # Locate the slider div
             logging.info("Locating the slider div...")
@@ -82,12 +88,18 @@ class CaptchaSolver:
             slider_location = slider_div.location
             logging.info(f"Slider initial position: {slider_location}")
 
-            # Simulate dragging the slider div
+            # Simulate human-like dragging of the slider div
             actions = ActionChains(self.driver)
             actions.click_and_hold(slider_div).perform()
-            time.sleep(0.5)  # Add a small delay to mimic human interaction
-            actions.move_by_offset(offset_x, 0).perform()
-            time.sleep(0.5)  # Add a small delay to mimic human interaction
+            time.sleep(random.uniform(0.2, 0.5))  # Add a small random delay to mimic human interaction
+
+            # Move the slider in small steps with slight variations
+            steps = 10
+            step_size = offset_x / steps
+            for _ in range(steps):
+                actions.move_by_offset(step_size + random.uniform(-2, 2), random.uniform(-1, 1)).perform()
+                time.sleep(random.uniform(0.1, 0.3))  # Add a small random delay between steps
+
             actions.release().perform()
             logging.info("Slider moved.")
 
@@ -99,6 +111,7 @@ class CaptchaSolver:
 
         except Exception as e:
             logging.error(f"Error solving slider CAPTCHA: {e}")
+
 
     def solve_icon_captcha(self):
         """
