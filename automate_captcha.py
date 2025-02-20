@@ -119,60 +119,77 @@ class CaptchaSolver:
         """
         try:
             logging.info("Waiting for icon selection CAPTCHA to load...")
-            icon_image = WebDriverWait(self.driver, 20).until(
-                EC.presence_of_element_located((By.XPATH, "//canvas[@width='64']"))
+            icon_div = WebDriverWait(self.driver, 20).until(
+                EC.presence_of_element_located((By.XPATH, "//div[contains(@style, 'display: flex;')]"))
             )
             logging.info("Icon selection CAPTCHA found.")
 
-            # Extract the image data from the canvas
-            icon_image_base64 = self.driver.execute_script(
-                "return arguments[0].toDataURL('image/png').substring(21);", icon_image
+            # Extract the icon order from the div
+            icon_order = []
+            icon_elements = icon_div.find_elements(By.XPATH, ".//div")
+            for icon_element in icon_elements:
+                style = icon_element.get_attribute("style")
+                if "background:" in style:
+                    # Extract the background position (e.g., "-2px -91px")
+                    background_position = style.split("background:")[1].split("no-repeat")[0].strip()
+                    icon_order.append(background_position)
+            logging.info(f"Icon order: {icon_order}")
+
+            # Extract the CAPTCHA image
+            logging.info("Extracting CAPTCHA image...")
+            canvas = WebDriverWait(self.driver, 20).until(
+                EC.presence_of_element_located((By.XPATH, "//canvas[@width='316']"))
             )
-            icon_image_png = base64.b64decode(icon_image_base64)
-            icon_image_path = os.path.join(CAPTCHA_IMAGE_DIR, f"icon_{int(time.time())}.png")
-            with open(icon_image_path, "wb") as f:
-                f.write(icon_image_png)
-            logging.info(f"Icon selection image saved to {icon_image_path}")
+            canvas_base64 = self.driver.execute_script(
+                "return arguments[0].toDataURL('image/png').substring(21);", canvas
+            )
+            canvas_png = base64.b64decode(canvas_base64)
+            captcha_image_path = os.path.join(CAPTCHA_IMAGE_DIR, f"icon_captcha_{int(time.time())}.png")
+            with open(captcha_image_path, "wb") as f:
+                f.write(canvas_png)
+            logging.info(f"CAPTCHA image saved to {captcha_image_path}")
 
             # Detect icons in the image
-            icon_positions = self.detect_icons(icon_image_path)
+            icon_positions = self.detect_icons(captcha_image_path, icon_order)
             logging.info(f"Detected icons: {icon_positions}")
 
             # Click the icons in the correct order
-            for icon_name in ["star", "cart", "calendar"]:  # Replace with the correct order
+            for icon_name in icon_order:
                 if icon_name in icon_positions:
                     x, y = icon_positions[icon_name]
-                    icon_element = self.driver.find_element(By.XPATH, f"//div[@data-icon='{icon_name}']")
+                    icon_element = self.driver.find_element(By.XPATH, f"//div[contains(@style, '{icon_name}')]")
                     actions = ActionChains(self.driver)
                     actions.move_to_element(icon_element).click().perform()
-                    logging.info(f"Clicked {icon_name} icon.")
+                    logging.info(f"Clicked icon with position: {icon_name}")
                     time.sleep(1)
 
         except Exception as e:
             logging.error(f"Error solving icon selection CAPTCHA: {e}")
 
-    def detect_icons(self, image_path):
+    def detect_icons(self, image_path, icon_order):
         """
         Detect icons in the image and return their positions.
         """
         image = cv2.imread(image_path)
         hsv_image = cv2.cvtColor(image, cv2.COLOR_BGR2HSV)
 
-        # Define color ranges for each icon
-        color_ranges = {
-            "star": {"lower": np.array([20, 100, 100]), "upper": np.array([30, 255, 255])},  # Adjust HSV values
-            "cart": {"lower": np.array([0, 100, 100]), "upper": np.array([10, 255, 255])},   # Adjust HSV values
-            "calendar": {"lower": np.array([100, 100, 100]), "upper": np.array([130, 255, 255])},  # Adjust HSV values
-        }
-
+        # Define color ranges for each icon based on the background position
         icon_positions = {}
-        for icon_name, color_range in color_ranges.items():
-            mask = cv2.inRange(hsv_image, color_range["lower"], color_range["upper"])
+        for icon_position in icon_order:
+            # Extract the y-coordinate from the background position (e.g., "-2px -91px" -> 91)
+            y_offset = int(icon_position.split(" ")[1].replace("px", ""))
+            
+            # Define a color range based on the y-offset
+            lower_bound = np.array([0, 0, y_offset - 10])
+            upper_bound = np.array([255, 255, y_offset + 10])
+
+            # Create a mask to detect the icon
+            mask = cv2.inRange(hsv_image, lower_bound, upper_bound)
             contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
             for contour in contours:
                 x, y, w, h = cv2.boundingRect(contour)
                 if w > 10 and h > 10:  # Filter out small noise
-                    icon_positions[icon_name] = (x + w // 2, y + h // 2)
+                    icon_positions[icon_position] = (x + w // 2, y + h // 2)
 
         return icon_positions
 

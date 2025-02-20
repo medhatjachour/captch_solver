@@ -14,7 +14,7 @@ def start_solving():
         return
 
     try:
-        solve_captcha_and_submit(website_url, username, email, password)
+        solve_captcha_and_submit(website_url="https://faucetpay.io/account/register", username="adasdasdasd", email="asdasdas@asdas.asd", password="https://faucetpay.io/account/register")
         messagebox.showinfo("Success", "Form submitted successfully!")
     except Exception as e:
         messagebox.showerror("Error", f"Failed to submit the form: {e}")
