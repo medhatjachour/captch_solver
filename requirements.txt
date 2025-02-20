@@ -4,3 +4,6 @@ numpy
 pillow 
 requests 
 beautifulsoup4
+selenium
+Tkinter
+pyinstaller
