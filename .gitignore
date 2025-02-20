@@ -177,7 +177,7 @@ cython_debug/
 # MacOS
 .DS_Store
 
-
+captcha_images
 tmp/
 EDFs/
 
