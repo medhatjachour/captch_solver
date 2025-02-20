@@ -12,6 +12,8 @@ import numpy as np
 from PIL import Image
 import random
 
+from detect_puzzle import GeeTestIdentifier
+
 # Configure logging
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 
@@ -24,105 +26,84 @@ class CaptchaSolver:
         self.driver = driver
 
     def solve_slider_captcha(self, max_retries=5):
-        """
-        Solve the slider CAPTCHA by dragging the slider div to the correct position.
-        Retry up to `max_retries` times if the CAPTCHA is not solved.
-        """
         for attempt in range(max_retries):
             try:
-                logging.info(f"Attempt {attempt + 1} to solve the slider CAPTCHA...")
+                logging.info(f"Attempt {attempt + 1}/{max_retries}")
 
-                logging.info("Waiting for CAPTCHA canvas to load...")
+                # Get elements
                 canvas = WebDriverWait(self.driver, 20).until(
                     EC.presence_of_element_located((By.XPATH, "//canvas[@width='316']"))
                 )
-                logging.info("CAPTCHA canvas found.")
-
-                # Extract the CAPTCHA background image
-                canvas_base64 = self.driver.execute_script(
-                    "return arguments[0].toDataURL('image/png').substring(21);", canvas
-                )
-                canvas_png = base64.b64decode(canvas_base64)
-                captcha_image_path = os.path.join(CAPTCHA_IMAGE_DIR, f"captcha_{int(time.time())}.png")
-                with open(captcha_image_path, "wb") as f:
-                    f.write(canvas_png)
-                logging.info(f"CAPTCHA background image saved to {captcha_image_path}")
-
-                # Wait for the puzzle piece element to be visible
-                logging.info("Waiting for puzzle piece to load...")
                 puzzle_piece_element = WebDriverWait(self.driver, 20).until(
                     EC.presence_of_element_located((By.XPATH, "//canvas[@width='64']"))
                 )
-                logging.info("Puzzle piece found.")
-
-                # Extract the puzzle piece image
-                puzzle_base64 = self.driver.execute_script(
-                    "return arguments[0].toDataURL('image/png').substring(21);", puzzle_piece_element
-                )
-                puzzle_png = base64.b64decode(puzzle_base64)
-                puzzle_piece_path = os.path.join(CAPTCHA_IMAGE_DIR, f"puzzle_{int(time.time())}.png")
-                with open(puzzle_piece_path, "wb") as f:
-                    f.write(puzzle_png)
-                logging.info(f"Puzzle piece image saved to {puzzle_piece_path}")
-
-                # Solve the CAPTCHA using template matching
-                background = cv2.imread(captcha_image_path, cv2.IMREAD_GRAYSCALE)
-                puzzle_piece = cv2.imread(puzzle_piece_path, cv2.IMREAD_GRAYSCALE)
-
-                result = cv2.matchTemplate(background, puzzle_piece, cv2.TM_CCOEFF_NORMED)
-                _, max_val, _, max_loc = cv2.minMaxLoc(result)
-
-                # Calculate the offset to move the slider
-                offset_x = max_loc[0] - 50  # Adjust based on the initial position of the puzzle piece
-                buffer = random.randint(5, 15)  # Add a random buffer to fine-tune the offset
-                offset_x += buffer  # Fine-tune the offset
-                logging.info(f"Moving slider by {offset_x} pixels (including buffer).")
-
-                # Locate the slider div
-                logging.info("Locating the slider div...")
                 slider_div = WebDriverWait(self.driver, 20).until(
                     EC.presence_of_element_located((By.XPATH, "//div[contains(@style, 'position: absolute; left: 8px;')]"))
                 )
-                logging.info("Slider div found.")
 
-                # Log the initial position of the slider
-                slider_location = slider_div.location
-                logging.info(f"Slider initial position: {slider_location}")
+                # Get scale ratio
+                scale_ratio = self.get_canvas_scale(canvas)
+                
+                # Process images
+                bg_img = self.get_canvas_image(canvas)
+                puzzle_img = self.get_canvas_image(puzzle_piece_element)
+                
+                identifier = GeeTestIdentifier(bg_img, puzzle_img)
+                result = identifier.find_puzzle_piece_position()
+                
+                # Apply scaling to coordinates
+                target_x = result['coordinates'][0] * scale_ratio
+                initial_x = 0
+                
+                logging.info(f"Scaled Target X: {target_x} | Initial X: {initial_x}")
 
-                # Simulate human-like dragging of the slider div
-                actions = ActionChains(self.driver)
-                actions.click_and_hold(slider_div).perform()
-                time.sleep(random.uniform(0.2, 0.5))  # Add a small random delay to mimic human interaction
+                # Calculate movement
+                move_offset = target_x - initial_x - 25
+                if move_offset < 0:
+                    logging.warning("Negative movement detected! Using absolute value")
+                    move_offset = abs(move_offset)
+                    
+                logging.info(f"Moving RIGHT by {move_offset}px")
+                
+                # Human-like drag
+                self.drag_slider(slider_div, move_offset)
 
-                # Move the slider in small steps with slight variations
-                steps = 10
-                step_size = offset_x / steps
-                for _ in range(steps):
-                    actions.move_by_offset(step_size + random.uniform(-2, 2), random.uniform(-1, 1)).perform()
-                    time.sleep(random.uniform(0.1, 0.3))  # Add a small random delay between steps
-
-                actions.release().perform()
-                logging.info("Slider moved.")
-
-                # Log the final position of the slider
-                slider_final_location = slider_div.location
-                logging.info(f"Slider final position: {slider_final_location}")
-
-                # Check if the CAPTCHA is solved
-                time.sleep(2)  # Wait for the CAPTCHA to update
                 if self.is_captcha_solved():
-                    logging.info("Slider CAPTCHA solved successfully!")
                     return True
-                else:
-                    logging.warning("Slider CAPTCHA not solved. Retrying...")
 
             except Exception as e:
-                logging.error(f"Error solving slider CAPTCHA: {e}")
-
-        logging.error(f"Failed to solve the slider CAPTCHA after {max_retries} attempts.")
+                logging.error(f"Attempt failed: {str(e)}")
+        
         return False
 
+    def get_canvas_scale(self, canvas_element):
+        """Calculate scale ratio between actual size and rendered size"""
+        dom_width = int(canvas_element.get_attribute('width'))
+        rendered_width = canvas_element.size['width']
+        return rendered_width / dom_width
 
+    def get_canvas_image(self, element):
+        """Extract canvas image as OpenCV format"""
+        canvas_base64 = self.driver.execute_script(
+            "return arguments[0].toDataURL('image/png').substring(21);", element
+        )
+        return base64.b64decode(canvas_base64)
+
+    def drag_slider(self, slider, distance):
+        """Human-like slider movement"""
+        action = ActionChains(self.driver)
+        action.click_and_hold(slider).perform()
+        
+        # Split movement into 10 steps with random variations
+        steps = 10
+        base_step = distance / steps
+        for _ in range(steps):
+            variance = random.uniform(-2, 2)
+            action.move_by_offset(base_step + variance, random.uniform(-1, 1))
+            action.pause(random.uniform(0.05, 0.2))
+        
+        action.release().perform()
+        action.pause(0.5)
 
 
 
