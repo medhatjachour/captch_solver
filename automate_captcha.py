@@ -22,7 +22,6 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(
 # Directory to save CAPTCHA images
 CAPTCHA_IMAGE_DIR = "captcha_images"
 os.makedirs(CAPTCHA_IMAGE_DIR, exist_ok=True)
-
 class CaptchaSolver:
     def __init__(self, driver):
         self.driver = driver
@@ -189,16 +188,14 @@ class CaptchaSolver:
 
     def get_icon_order(self):
         try:
-            # Target the popup's flex container with sprite icons
             icon_container = WebDriverWait(self.driver, 10).until(
                 EC.presence_of_element_located((
-                    By.XPATH, 
+                    By.XPATH,
                     "//div[contains(@style, 'position: absolute; top: 50%; left: 50%')]//div[contains(@style, 'display: flex;') and .//div[contains(@style, 'background: url(\"https://basiliskcaptcha.com/static/challenges/sprites/icons_sprite.png\"')]]"
                 ))
             )
             logging.info("Icon order container found.")
 
-            # Extract icon elements within the container
             icon_elements = icon_container.find_elements(By.XPATH, ".//div[contains(@style, 'background: url')]")
             if not icon_elements:
                 logging.error("No icon elements found in the container.")
@@ -207,7 +204,6 @@ class CaptchaSolver:
                     logging.info(f"Child div style: {div.get_attribute('style')}")
                 return ["star", "calendar", "cart"]
 
-            # Map y-offsets to icon names
             offset_mapping = {
                 "-21": "star",
                 "-91": "calendar",
@@ -217,13 +213,14 @@ class CaptchaSolver:
             icon_order = []
             for element in icon_elements:
                 style = element.get_attribute("style")
-                y_offset_match = re.search(r"background:.*?(\-\d+)px", style)
+                logging.info(f"Icon element style: {style}")
+                y_offset_match = re.search(r"background:.*?-\d+px\s+(\-\d+)px", style)
                 if y_offset_match:
                     y_offset = y_offset_match.group(1)
                     icon_name = offset_mapping.get(y_offset, "unknown")
+                    logging.info(f"Found icon: {icon_name} with y-offset: {y_offset}")
                     if icon_name != "unknown":
                         icon_order.append(icon_name)
-                    logging.info(f"Found icon: {icon_name} with y-offset: {y_offset}")
                 else:
                     logging.warning(f"Could not parse y-offset from style: {style}")
 
@@ -231,7 +228,7 @@ class CaptchaSolver:
                 logging.error("No valid icons parsed from offsets.")
                 return ["star", "calendar", "cart"]
 
-            logging.info(f"Detected icon order from offsets: {icon_order}")
+            logging.info(f"Detected icon order: {icon_order}")
             return icon_order
 
         except Exception as e:
@@ -245,15 +242,11 @@ class CaptchaSolver:
             return {}
 
         captcha_gray = self.preprocess_image(captcha_image)
+        cv2.imwrite(os.path.join(CAPTCHA_IMAGE_DIR, "captcha_processed.png"), captcha_gray)
 
-        # Load sprite sheet
-        sprite_url = "https://basiliskcaptcha.com/static/challenges/sprites/icons_sprite.png"
         sprite_image_path = os.path.join(CAPTCHA_IMAGE_DIR, "icons_sprite.png")
         if not os.path.exists(sprite_image_path):
-            sprite_response = requests.get(sprite_url)
-            if sprite_response.status_code != 200:
-                logging.error("Failed to download sprite sheet.")
-                return {}
+            sprite_response = requests.get("https://basiliskcaptcha.com/static/challenges/sprites/icons_sprite.png")
             with open(sprite_image_path, "wb") as f:
                 f.write(sprite_response.content)
 
@@ -263,19 +256,21 @@ class CaptchaSolver:
             return {}
 
         sprite_image = self.preprocess_image(sprite_image)
+        cv2.imwrite(os.path.join(CAPTCHA_IMAGE_DIR, "sprite_processed.png"), sprite_image)
 
-        # Define icon regions from sprite sheet (22x22 pixels)
         icon_templates = {
-            "star": sprite_image[21:43, 2:24],      # -21px to -43px
-            "calendar": sprite_image[91:113, 2:24], # -91px to -113px
-            "cart": sprite_image[141:163, 2:24]     # -141px to -163px
+            "star": sprite_image[21:43, 2:24],
+            "calendar": sprite_image[91:113, 2:24],
+            "cart": sprite_image[141:163, 2:24]
         }
+
+        for name, template in icon_templates.items():
+            cv2.imwrite(os.path.join(CAPTCHA_IMAGE_DIR, f"{name}_template.png"), template)
 
         all_matches = {}
         icon_positions = {}
         used_positions = set()
 
-        # Detect matches for each icon
         for icon_name, template in icon_templates.items():
             scales = [0.8, 0.9, 1.0, 1.1, 1.2]
             matches = []
@@ -286,50 +281,50 @@ class CaptchaSolver:
                     continue
 
                 result = cv2.matchTemplate(captcha_gray, scaled_template, cv2.TM_CCOEFF_NORMED)
-                locations = np.where(result >= 0.4)  # Adjusted threshold
+                threshold = 0.4
+                locations = np.where(result >= threshold)
                 for pt in zip(*locations[::-1]):
                     position = (pt[0] + scaled_template.shape[1] // 2, pt[1] + scaled_template.shape[0] // 2)
                     score = result[pt[1], pt[0]]
                     matches.append((position, score))
 
-            matches.sort(key=lambda x: x[1], reverse=True)
-            all_matches[icon_name] = matches[:3]  # Top 3 matches
-            logging.info(f"Icon: {icon_name}, Matches Found: {len(matches)}, Top Matches: {matches[:3] if matches else 'None'}, Template Size: {template.shape}")
+                cv2.imwrite(os.path.join(CAPTCHA_IMAGE_DIR, f"{icon_name}_heatmap_{scale}.png"), (result * 255).astype(np.uint8))
 
-        # Assign positions in order with spatial separation
+            matches.sort(key=lambda x: x[1], reverse=True)
+            all_matches[icon_name] = matches[:3]
+            logging.info(f"Icon: {icon_name}, Matches: {len(matches)}, Top: {matches[:3] if matches else 'None'}")
+
         for icon_name in icon_order:
             if icon_name in all_matches and all_matches[icon_name]:
                 for position, score in all_matches[icon_name]:
                     pos_tuple = (position[0], position[1])
-                    is_valid = True
-                    for used_pos in used_positions:
-                        dist = np.sqrt((position[0] - used_pos[0])**2 + (position[1] - used_pos[1])**2)
-                        if dist < 30:  # Minimum distance
-                            is_valid = False
+                    if pos_tuple not in used_positions:
+                        dist_valid = all(np.sqrt((position[0] - up[0])**2 + (position[1] - up[1])**2) >= 20 for up in used_positions)
+                        if dist_valid and 0 <= position[0] < captcha_gray.shape[1] and 0 <= position[1] < captcha_gray.shape[0]:
+                            icon_positions[icon_name] = position
+                            used_positions.add(pos_tuple)
+                            logging.info(f"Assigned {icon_name} to {position} with score {score}")
                             break
-                    if (is_valid and 
-                        pos_tuple not in used_positions and 
-                        0 <= position[0] < captcha_gray.shape[1] and 
-                        0 <= position[1] < captcha_gray.shape[0]):
-                        icon_positions[icon_name] = position
-                        used_positions.add(pos_tuple)
-                        logging.info(f"Assigned {icon_name} to position {position} with score {score}")
-                        break
                 else:
-                    logging.warning(f"No valid unique position for {icon_name}, using best available.")
+                    logging.warning(f"No unique position for {icon_name}")
                     if all_matches[icon_name]:
                         icon_positions[icon_name] = all_matches[icon_name][0][0]
             else:
-                logging.error(f"No matches found for {icon_name}")
+                logging.error(f"No matches for {icon_name}")
+
+        debug_img = cv2.cvtColor(captcha_gray, cv2.COLOR_GRAY2BGR)
+        for icon_name, pos in icon_positions.items():
+            cv2.circle(debug_img, pos, 5, (0, 255, 0), -1)
+            cv2.putText(debug_img, icon_name, (pos[0] + 10, pos[1]), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 1)
+        cv2.imwrite(os.path.join(CAPTCHA_IMAGE_DIR, "debug_icon_positions.png"), debug_img)
 
         return icon_positions
 
     def preprocess_image(self, image):
         if len(image.shape) > 2:
             image = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
-        image = cv2.fastNlMeansDenoising(image, h=10)
-        clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
-        return clahe.apply(image)
+        image = cv2.GaussianBlur(image, (3, 3), 0)
+        return image
 
     def extract_background_image_url(self, style):
         match = re.search(r"background-image:\s*url\(['\"]?(.*?)['\"]?\)", style)
@@ -360,7 +355,6 @@ class CaptchaSolver:
         except:
             logging.info("Icon CAPTCHA is solved (CAPTCHA container gone).")
             return True
-
 def solve_captcha_and_submit(website_url, username, email, password):
     driver = webdriver.Chrome()
     try:
