@@ -124,18 +124,68 @@ class CaptchaSolver:
             logging.info("CAPTCHA is solved.")
             return True
 
+
+
+    def get_icon_order(self):
+        """
+        Extract the order of icons based on their y positions.
+        """
+        try:
+            # Wait for the icon container to load
+            icon_container = WebDriverWait(self.driver, 20).until(
+                EC.presence_of_element_located((By.XPATH, "//div[contains(@style, 'display: flex;')]"))
+            )
+            logging.info("Icon container found.")
+
+            # Extract all icon elements
+            icon_elements = icon_container.find_elements(By.XPATH, ".//div[contains(@style, 'background: url')]")
+            if not icon_elements:
+                logging.error("No icons found in the container.")
+                return []
+
+            # Extract y positions and icon names
+            icon_data = []
+            for icon_element in icon_elements:
+                style = icon_element.get_attribute("style")
+                # Extract y position from the style attribute
+                y_position_match = re.search(r"background: url\(.*?\) (-\d+)px (-\d+)px", style)
+                if y_position_match:
+                    y_position = int(y_position_match.group(2))  # Extract the y position
+                    # Determine the icon name based on the y position
+                    if y_position == -21:
+                        icon_name = "star"
+                    elif y_position == -91:
+                        icon_name = "calendar"
+                    elif y_position == -141:
+                        icon_name = "cart"
+                    else:
+                        icon_name = "unknown"
+                    icon_data.append({"name": icon_name, "y": y_position})
+
+            # Sort icons by y position
+            icon_data.sort(key=lambda x: x["y"])
+            icon_order = [icon["name"] for icon in icon_data]
+
+            logging.info(f"Detected icon order: {icon_order}")
+            return icon_order
+
+        except Exception as e:
+            logging.error(f"Error extracting icon order: {e}")
+            return []
     def solve_icon_captcha(self, max_retries=5):
-        """
-        Solve the icon selection CAPTCHA by selecting icons in the correct order.
-        """
         for attempt in range(max_retries):
-            logging.info(f"icon Attempt {attempt + 1}/{max_retries}")
+            logging.info(f"Icon Attempt {attempt + 1}/{max_retries}")
             try:
                 logging.info("Waiting for icon selection CAPTCHA to load...")
                 icon_div = WebDriverWait(self.driver, 20).until(
                     EC.presence_of_element_located((By.XPATH, "//div[contains(@style, 'background-image:')]"))
                 )
                 logging.info("Icon selection CAPTCHA found.")
+                
+                # Log icon_div size and position
+                div_location = icon_div.location
+                div_size = icon_div.size
+                logging.info(f"Icon div location: {div_location}, size: {div_size}")
 
                 # Extract the CAPTCHA image URL
                 style = icon_div.get_attribute("style")
@@ -151,30 +201,35 @@ class CaptchaSolver:
                     continue
 
                 # Detect icons in the image
-                icon_order = self.get_icon_order()  # Define the expected order of icons
+                icon_order = self.get_icon_order()
                 icon_positions = self.detect_icons(captcha_image_path, icon_order)
-                logging.info(f"Detected icons: {icon_positions}")
+                logging.info(f"Detected icon positions: {icon_positions}")
+
+                # Validate positions
+                if not icon_positions or all(pos == (0, 0) for pos in icon_positions.values()):
+                    logging.warning("No valid icon positions detected, skipping click.")
+                    continue
 
                 # Click the icons in the correct order
-                for icon_position in icon_order:
-                    if icon_position in icon_positions:
-                        x, y = icon_positions[icon_position]
-                        # Move to the icon position and click
+                for icon_name in icon_order:
+                    if icon_name in icon_positions:
+                        x, y = icon_positions[icon_name]
+                        logging.info(f"Clicking {icon_name} at ({x}, {y})")
                         actions = ActionChains(self.driver)
                         actions.move_to_element_with_offset(icon_div, x, y).click().perform()
-                        logging.info(f"Clicked icon with position: {icon_position}")
-                        time.sleep(2)
+                        time.sleep(1)  # Reduced from 2s for faster testing
 
                 # Check if the CAPTCHA is solved
                 if self.is_captcha_solved():
+                    logging.info("Icon CAPTCHA solved successfully.")
                     return True
 
             except Exception as e:
                 logging.error(f"Error solving icon selection CAPTCHA: {e}")
         
+        logging.error("Failed to solve icon CAPTCHA after all retries.")
         return False
-        
-        
+
     def detect_icons(self, image_path, icon_order):
         """
         Detect icons in the image using combined template matching and color-based detection.
@@ -185,55 +240,56 @@ class CaptchaSolver:
             logging.error("Failed to load CAPTCHA image.")
             return {}
 
+        # Log image dimensions
+        logging.info(f"CAPTCHA image dimensions: {captcha_image.shape}")
+
         # Preprocess the CAPTCHA image
         captcha_gray = self.preprocess_image(captcha_image)
 
-        # Define icon templates (replace with your actual paths)
+        # Define icon templates
         icon_templates = {
-            "star": 'templates/1.png',  # Star
-            "calendar": 'templates/2.png',  # Calendar
-            "cart": 'templates/3.png',  # Cart
+            "star": './templates/1.png',
+            "calendar": './templates/2.png',
+            "cart": './templates/3.png'
         }
 
         icon_positions = {}
 
-        # Process each icon using template matching
+        # Template matching
         for icon_name, template_path in icon_templates.items():
-            # Load the template image
-            icon = cv2.imread(template_path, cv2.IMREAD_GRAYSCALE)
-            if icon is None:
-                logging.error(f"Failed to load template image: {template_path}")
+            template = cv2.imread(template_path, cv2.IMREAD_GRAYSCALE)
+            if template is None:
+                logging.error(f"Failed to load template: {template_path}")
                 continue
 
-            # Preprocess the template image
-            icon = self.preprocess_image(icon)
-
-            # Perform multi-scale template matching
+            template = self.preprocess_image(template)
             scales = [0.8, 0.9, 1.0, 1.1, 1.2]
-            best_score = 0.8  # Increased threshold for better accuracy
+            best_score = -1
             best_position = (0, 0)
 
             for scale in scales:
-                scaled_icon = cv2.resize(icon, None, fx=scale, fy=scale, interpolation=cv2.INTER_CUBIC)
-                if scaled_icon.shape[0] > captcha_gray.shape[0] or scaled_icon.shape[1] > captcha_gray.shape[1]:
+                scaled_template = cv2.resize(template, None, fx=scale, fy=scale, interpolation=cv2.INTER_CUBIC)
+                if scaled_template.shape[0] > captcha_gray.shape[0] or scaled_template.shape[1] > captcha_gray.shape[1]:
                     continue
 
-                result = cv2.matchTemplate(captcha_gray, scaled_icon, cv2.TM_CCOEFF_NORMED)
+                result = cv2.matchTemplate(captcha_gray, scaled_template, cv2.TM_CCOEFF_NORMED)
                 _, max_val, _, max_loc = cv2.minMaxLoc(result)
 
                 if max_val > best_score:
                     best_score = max_val
-                    best_position = max_loc
-
+                    best_position = (max_loc[0] + scaled_template.shape[1] // 2,  # Center of the matched region
+                                max_loc[1] + scaled_template.shape[0] // 2)
+            
             logging.info(f"Icon: {icon_name}, Best Score: {best_score}, Best Position: {best_position}")
-
-            if best_score >= 0.8:  # Only accept matches with high confidence
+            
+            if best_score >= 0.7:  # Lowered threshold to test if it helps
                 icon_positions[icon_name] = best_position
 
-        # If template matching fails, use color-based detection as a fallback
-        if not icon_positions:
+        # Fallback to color-based detection if needed
+        if not icon_positions or len(icon_positions) < len(icon_order):
             logging.info("Falling back to color-based detection.")
-            icon_positions = self.detect_icons_by_color(captcha_image)
+            color_positions = self.detect_icons_by_color(captcha_image)
+            icon_positions.update(color_positions)
 
         return icon_positions
 
@@ -267,6 +323,8 @@ class CaptchaSolver:
                 icon_positions[icon_name] = positions[0]
 
         return icon_positions
+        
+    
     def preprocess_image(self, image):
         """
         Preprocess the image for better icon detection.
@@ -283,11 +341,6 @@ class CaptchaSolver:
 
         return image
 
-    def get_icon_order(self):
-        """
-        Define the expected order of icons.
-        """
-        return ["star", "calendar", "cart"]
 
     def extract_background_image_url(self, style):
         """
