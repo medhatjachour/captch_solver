@@ -22,6 +22,7 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(
 # Directory to save CAPTCHA images
 CAPTCHA_IMAGE_DIR = "captcha_images"
 os.makedirs(CAPTCHA_IMAGE_DIR, exist_ok=True)
+
 class CaptchaSolver:
     def __init__(self, driver):
         self.driver = driver
@@ -91,7 +92,7 @@ class CaptchaSolver:
 
     def is_captcha_solved(self):
         try:
-            time.sleep(5)
+            time.sleep(2)
             WebDriverWait(self.driver, 5).until(
                 EC.presence_of_element_located((By.XPATH, "//div[contains(@style, 'position: absolute; left: 8px;')]"))
             )
@@ -138,11 +139,17 @@ class CaptchaSolver:
                 logging.info(f"Scale ratios - X: {scale_x}, Y: {scale_y}")
 
                 icon_order = self.get_icon_order()
+                logging.info(f"Icon order to be clicked: {icon_order}")
                 icon_positions = self.detect_icons(captcha_image_path, icon_order)
                 logging.info(f"Detected icon positions: {icon_positions}")
 
                 if not icon_positions or all(pos == (0, 0) for pos in icon_positions.values()):
                     logging.warning("No valid icon positions detected, skipping click.")
+                    continue
+
+                missing_icons = [icon for icon in icon_order if icon not in icon_positions]
+                if missing_icons:
+                    logging.error(f"Missing positions for icons: {missing_icons}")
                     continue
 
                 center_x = div_size['width'] // 2
@@ -182,33 +189,49 @@ class CaptchaSolver:
 
     def get_icon_order(self):
         try:
-            instruction_container = WebDriverWait(self.driver, 10).until(
-                EC.presence_of_element_located((By.XPATH, "//div[contains(@class, 'captcha-instruction') or contains(text(), 'Click')]"))
+            # Target the popup's flex container with sprite icons
+            icon_container = WebDriverWait(self.driver, 10).until(
+                EC.presence_of_element_located((
+                    By.XPATH, 
+                    "//div[contains(@style, 'position: absolute; top: 50%; left: 50%')]//div[contains(@style, 'display: flex;') and .//div[contains(@style, 'background: url(\"https://basiliskcaptcha.com/static/challenges/sprites/icons_sprite.png\"')]]"
+                ))
             )
-            logging.info("Instruction container found.")
-            instruction_text = instruction_container.text.lower()
+            logging.info("Icon order container found.")
 
-            icon_mapping = {
-                "star": "star",
-                "calendar": "calendar",
-                "cart": "cart",
-                "shopping": "cart",
-                "date": "calendar",
-                "event": "calendar"
+            # Extract icon elements within the container
+            icon_elements = icon_container.find_elements(By.XPATH, ".//div[contains(@style, 'background: url')]")
+            if not icon_elements:
+                logging.error("No icon elements found in the container.")
+                all_divs = icon_container.find_elements(By.XPATH, ".//div")
+                for div in all_divs:
+                    logging.info(f"Child div style: {div.get_attribute('style')}")
+                return ["star", "calendar", "cart"]
+
+            # Map y-offsets to icon names
+            offset_mapping = {
+                "-21": "star",
+                "-91": "calendar",
+                "-141": "cart"
             }
 
             icon_order = []
-            for word in instruction_text.split():
-                for keyword, icon_name in icon_mapping.items():
-                    if keyword in word and icon_name not in icon_order:
+            for element in icon_elements:
+                style = element.get_attribute("style")
+                y_offset_match = re.search(r"background:.*?(\-\d+)px", style)
+                if y_offset_match:
+                    y_offset = y_offset_match.group(1)
+                    icon_name = offset_mapping.get(y_offset, "unknown")
+                    if icon_name != "unknown":
                         icon_order.append(icon_name)
-                        break
+                    logging.info(f"Found icon: {icon_name} with y-offset: {y_offset}")
+                else:
+                    logging.warning(f"Could not parse y-offset from style: {style}")
 
             if not icon_order:
-                logging.error("No recognizable icons in instructions. Using default order.")
+                logging.error("No valid icons parsed from offsets.")
                 return ["star", "calendar", "cart"]
 
-            logging.info(f"Detected icon order from instructions: {icon_order}")
+            logging.info(f"Detected icon order from offsets: {icon_order}")
             return icon_order
 
         except Exception as e:
@@ -223,80 +246,88 @@ class CaptchaSolver:
 
         captcha_gray = self.preprocess_image(captcha_image)
 
+        # Load sprite sheet
+        sprite_url = "https://basiliskcaptcha.com/static/challenges/sprites/icons_sprite.png"
+        sprite_image_path = os.path.join(CAPTCHA_IMAGE_DIR, "icons_sprite.png")
+        if not os.path.exists(sprite_image_path):
+            sprite_response = requests.get(sprite_url)
+            if sprite_response.status_code != 200:
+                logging.error("Failed to download sprite sheet.")
+                return {}
+            with open(sprite_image_path, "wb") as f:
+                f.write(sprite_response.content)
+
+        sprite_image = cv2.imread(sprite_image_path, cv2.IMREAD_GRAYSCALE)
+        if sprite_image is None:
+            logging.error("Failed to load sprite image.")
+            return {}
+
+        sprite_image = self.preprocess_image(sprite_image)
+
+        # Define icon regions from sprite sheet (22x22 pixels)
         icon_templates = {
-            "star": 'templates/1.png',
-            "calendar": 'templates/2.png',
-            "cart": 'templates/3.png'
+            "star": sprite_image[21:43, 2:24],      # -21px to -43px
+            "calendar": sprite_image[91:113, 2:24], # -91px to -113px
+            "cart": sprite_image[141:163, 2:24]     # -141px to -163px
         }
 
+        all_matches = {}
         icon_positions = {}
+        used_positions = set()
 
-        for icon_name, template_path in icon_templates.items():
-            icon = cv2.imread(template_path, cv2.IMREAD_GRAYSCALE)
-            if icon is None:
-                logging.error(f"Failed to load template image: {template_path}")
-                continue
-
-            icon = self.preprocess_image(icon)
-            scales = [0.5, 0.75, 1.0, 1.25, 1.5]
-            best_score = 0
-            best_position = (0, 0)
+        # Detect matches for each icon
+        for icon_name, template in icon_templates.items():
+            scales = [0.8, 0.9, 1.0, 1.1, 1.2]
+            matches = []
 
             for scale in scales:
-                scaled_icon = cv2.resize(icon, None, fx=scale, fy=scale, interpolation=cv2.INTER_CUBIC)
-                if scaled_icon.shape[0] > captcha_gray.shape[0] or scaled_icon.shape[1] > captcha_gray.shape[1]:
+                scaled_template = cv2.resize(template, None, fx=scale, fy=scale, interpolation=cv2.INTER_CUBIC)
+                if scaled_template.shape[0] > captcha_gray.shape[0] or scaled_template.shape[1] > captcha_gray.shape[1]:
                     continue
 
-                result = cv2.matchTemplate(captcha_gray, scaled_icon, cv2.TM_CCOEFF_NORMED)
-                _, max_val, _, max_loc = cv2.minMaxLoc(result)
+                result = cv2.matchTemplate(captcha_gray, scaled_template, cv2.TM_CCOEFF_NORMED)
+                locations = np.where(result >= 0.4)  # Adjusted threshold
+                for pt in zip(*locations[::-1]):
+                    position = (pt[0] + scaled_template.shape[1] // 2, pt[1] + scaled_template.shape[0] // 2)
+                    score = result[pt[1], pt[0]]
+                    matches.append((position, score))
 
-                if max_val > best_score:
-                    best_score = max_val
-                    best_position = (max_loc[0] + scaled_icon.shape[1] // 2,
-                                   max_loc[1] + scaled_icon.shape[0] // 2)
+            matches.sort(key=lambda x: x[1], reverse=True)
+            all_matches[icon_name] = matches[:3]  # Top 3 matches
+            logging.info(f"Icon: {icon_name}, Matches Found: {len(matches)}, Top Matches: {matches[:3] if matches else 'None'}, Template Size: {template.shape}")
 
-            logging.info(f"Icon: {icon_name}, Best Score: {best_score}, Best Position: {best_position}, Template Size: {icon.shape}")
-
-            if best_score >= 0.2:
-                icon_positions[icon_name] = best_position
-
-        if not icon_positions or len(icon_positions) < len(icon_order):
-            logging.info("Falling back to color-based detection.")
-            color_positions = self.detect_icons_by_color(captcha_image)
-            icon_positions.update({k: v for k, v in color_positions.items() if k not in icon_positions})
-
-        return icon_positions
-
-    def detect_icons_by_color(self, image):
-        icon_positions = {}
-        hsv_image = cv2.cvtColor(image, cv2.COLOR_BGR2HSV)
-
-        color_ranges = {
-            "star": {"lower": np.array([90, 200, 200]), "upper": np.array([100, 255, 255])},
-            "cart": {"lower": np.array([85, 200, 200]), "upper": np.array([90, 255, 255])},
-            "calendar": {"lower": np.array([120, 150, 200]), "upper": np.array([130, 255, 255])}
-        }
-
-        for icon_name, color_range in color_ranges.items():
-            mask = cv2.inRange(hsv_image, color_range["lower"], color_range["upper"])
-            contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-
-            positions = []
-            for contour in contours:
-                x, y, w, h = cv2.boundingRect(contour)
-                if w > 10 and h > 10:
-                    center_x, center_y = x + w // 2, y + h // 2
-                    positions.append((center_x, center_y))
-
-            if positions:
-                icon_positions[icon_name] = positions[0]
+        # Assign positions in order with spatial separation
+        for icon_name in icon_order:
+            if icon_name in all_matches and all_matches[icon_name]:
+                for position, score in all_matches[icon_name]:
+                    pos_tuple = (position[0], position[1])
+                    is_valid = True
+                    for used_pos in used_positions:
+                        dist = np.sqrt((position[0] - used_pos[0])**2 + (position[1] - used_pos[1])**2)
+                        if dist < 30:  # Minimum distance
+                            is_valid = False
+                            break
+                    if (is_valid and 
+                        pos_tuple not in used_positions and 
+                        0 <= position[0] < captcha_gray.shape[1] and 
+                        0 <= position[1] < captcha_gray.shape[0]):
+                        icon_positions[icon_name] = position
+                        used_positions.add(pos_tuple)
+                        logging.info(f"Assigned {icon_name} to position {position} with score {score}")
+                        break
+                else:
+                    logging.warning(f"No valid unique position for {icon_name}, using best available.")
+                    if all_matches[icon_name]:
+                        icon_positions[icon_name] = all_matches[icon_name][0][0]
+            else:
+                logging.error(f"No matches found for {icon_name}")
 
         return icon_positions
 
     def preprocess_image(self, image):
         if len(image.shape) > 2:
             image = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
-        image = cv2.fastNlMeansDenoising(image)
+        image = cv2.fastNlMeansDenoising(image, h=10)
         clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
         return clahe.apply(image)
 
@@ -364,17 +395,10 @@ def solve_captcha_and_submit(website_url, username, email, password):
             logging.error("Icon CAPTCHA failed, aborting.")
             return
 
-        logging.info("Submitting the form...")
-        submit_button = WebDriverWait(driver, 10).until(
-            EC.element_to_be_clickable((By.XPATH, "//button[@type='submit']"))
-        )
-        logging.info("Submit button found.")
-        submit_button.click()
-        logging.info("Form submitted.")
-
     except Exception as e:
         logging.error(f"An error occurred: {e}")
     finally:
         logging.info("Closing the browser...")
         time.sleep(10)
         driver.quit()
+
