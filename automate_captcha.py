@@ -14,7 +14,7 @@ from PIL import Image
 import random
 import re
 
-from detect_puzzle import GeeTestIdentifier
+from detect_puzzle import GeeTestIdentifier  # Assuming this is a custom module
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
@@ -22,6 +22,7 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(
 # Directory to save CAPTCHA images
 CAPTCHA_IMAGE_DIR = "captcha_images"
 os.makedirs(CAPTCHA_IMAGE_DIR, exist_ok=True)
+
 class CaptchaSolver:
     def __init__(self, driver):
         self.driver = driver
@@ -142,13 +143,13 @@ class CaptchaSolver:
                 icon_positions = self.detect_icons(captcha_image_path, icon_order)
                 logging.info(f"Detected icon positions: {icon_positions}")
 
-                if not icon_positions or all(pos == (0, 0) for pos in icon_positions.values()):
-                    logging.warning("No valid icon positions detected, skipping click.")
-                    continue
-
-                missing_icons = [icon for icon in icon_order if icon not in icon_positions]
-                if missing_icons:
-                    logging.error(f"Missing positions for icons: {missing_icons}")
+                if not icon_positions or any(icon not in icon_positions for icon in icon_order):
+                    logging.warning("Missing or invalid icon positions detected, retrying with refresh.")
+                    refresh_div = WebDriverWait(self.driver, 10).until(
+                        EC.element_to_be_clickable((By.XPATH, "//div[span[text()=\"I'm not a robot\"]]"))
+                    )
+                    self.driver.execute_script("arguments[0].click();", refresh_div)
+                    time.sleep(5)
                     continue
 
                 center_x = div_size['width'] // 2
@@ -166,14 +167,14 @@ class CaptchaSolver:
                         logging.info(f"Clicking {icon_name} at image coords ({x}, {y}), scaled to ({scaled_x}, {scaled_y}), offset ({offset_x}, {offset_y})")
                         actions = ActionChains(self.driver)
                         actions.move_to_element(icon_div).move_by_offset(offset_x, offset_y).click().perform()
-                        time.sleep(1)
+                        time.sleep(random.uniform(1.5, 2.5))  # Randomize click delay
 
                 apply_button = WebDriverWait(self.driver, 10).until(
                     EC.element_to_be_clickable((By.XPATH, "//button[text()='Apply']"))
                 )
                 logging.info("Apply button found, clicking it.")
-                apply_button.click()
-                time.sleep(2)
+                self.driver.execute_script("arguments[0].click();", apply_button)
+                time.sleep(5)
 
                 if self.is_captcha_solvedImg():
                     logging.info("Icon CAPTCHA solved successfully.")
@@ -183,6 +184,7 @@ class CaptchaSolver:
 
             except Exception as e:
                 logging.error(f"Error solving icon selection CAPTCHA: {e}")
+                time.sleep(2)  # Brief pause before retry
         logging.error("Failed to solve icon CAPTCHA after all retries.")
         return False
 
@@ -199,15 +201,12 @@ class CaptchaSolver:
             icon_elements = icon_container.find_elements(By.XPATH, ".//div[contains(@style, 'background: url')]")
             if not icon_elements:
                 logging.error("No icon elements found in the container.")
-                all_divs = icon_container.find_elements(By.XPATH, ".//div")
-                for div in all_divs:
-                    logging.info(f"Child div style: {div.get_attribute('style')}")
                 return ["star", "calendar", "cart"]
 
             offset_mapping = {
                 "-21": "star",
-                "-91": "calendar",
-                "-141": "cart"
+                "-91": "cart",
+                "-141": "calendar"
             }
 
             icon_order = []
@@ -241,91 +240,115 @@ class CaptchaSolver:
             logging.error("Failed to load CAPTCHA image.")
             return {}
 
-        captcha_gray = self.preprocess_image(captcha_image)
-        cv2.imwrite(os.path.join(CAPTCHA_IMAGE_DIR, "captcha_processed.png"), captcha_gray)
-
-        sprite_image_path = os.path.join(CAPTCHA_IMAGE_DIR, "icons_sprite.png")
-        if not os.path.exists(sprite_image_path):
-            sprite_response = requests.get("https://basiliskcaptcha.com/static/challenges/sprites/icons_sprite.png")
-            with open(sprite_image_path, "wb") as f:
-                f.write(sprite_response.content)
-
-        sprite_image = cv2.imread(sprite_image_path, cv2.IMREAD_GRAYSCALE)
-        if sprite_image is None:
-            logging.error("Failed to load sprite image.")
-            return {}
-
-        sprite_image = self.preprocess_image(sprite_image)
-        cv2.imwrite(os.path.join(CAPTCHA_IMAGE_DIR, "sprite_processed.png"), sprite_image)
-
-        icon_templates = {
-            "star": sprite_image[21:43, 2:24],
-            "calendar": sprite_image[91:113, 2:24],
-            "cart": sprite_image[141:163, 2:24]
-        }
-
-        for name, template in icon_templates.items():
-            cv2.imwrite(os.path.join(CAPTCHA_IMAGE_DIR, f"{name}_template.png"), template)
-
-        all_matches = {}
+        # Preprocess image to isolate icons by color
+        icon_masks = self.preprocess_image(captcha_image)
         icon_positions = {}
         used_positions = set()
 
-        for icon_name, template in icon_templates.items():
-            scales = [0.8, 0.9, 1.0, 1.1, 1.2]
-            matches = []
-
-            for scale in scales:
-                scaled_template = cv2.resize(template, None, fx=scale, fy=scale, interpolation=cv2.INTER_CUBIC)
-                if scaled_template.shape[0] > captcha_gray.shape[0] or scaled_template.shape[1] > captcha_gray.shape[1]:
-                    continue
-
-                result = cv2.matchTemplate(captcha_gray, scaled_template, cv2.TM_CCOEFF_NORMED)
-                threshold = 0.4
-                locations = np.where(result >= threshold)
-                for pt in zip(*locations[::-1]):
-                    position = (pt[0] + scaled_template.shape[1] // 2, pt[1] + scaled_template.shape[0] // 2)
-                    score = result[pt[1], pt[0]]
-                    matches.append((position, score))
-
-                cv2.imwrite(os.path.join(CAPTCHA_IMAGE_DIR, f"{icon_name}_heatmap_{scale}.png"), (result * 255).astype(np.uint8))
-
-            matches.sort(key=lambda x: x[1], reverse=True)
-            all_matches[icon_name] = matches[:3]
-            logging.info(f"Icon: {icon_name}, Matches: {len(matches)}, Top: {matches[:3] if matches else 'None'}")
-
         for icon_name in icon_order:
-            if icon_name in all_matches and all_matches[icon_name]:
-                for position, score in all_matches[icon_name]:
-                    pos_tuple = (position[0], position[1])
-                    if pos_tuple not in used_positions:
-                        dist_valid = all(np.sqrt((position[0] - up[0])**2 + (position[1] - up[1])**2) >= 20 for up in used_positions)
-                        if dist_valid and 0 <= position[0] < captcha_gray.shape[1] and 0 <= position[1] < captcha_gray.shape[0]:
-                            icon_positions[icon_name] = position
-                            used_positions.add(pos_tuple)
-                            logging.info(f"Assigned {icon_name} to {position} with score {score}")
-                            break
-                else:
-                    logging.warning(f"No unique position for {icon_name}")
-                    if all_matches[icon_name]:
-                        icon_positions[icon_name] = all_matches[icon_name][0][0]
+            mask = icon_masks[icon_name]
+            # Find contours to locate the icon
+            contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+            if contours:
+                # Sort contours by area and process the largest
+                contours = sorted(contours, key=cv2.contourArea, reverse=True)
+                for contour in contours[:1]:  # Only take the largest contour
+                    if cv2.contourArea(contour) > 50:  # Minimum area threshold
+                        M = cv2.moments(contour)
+                        if M["m00"] != 0:
+                            cX = int(M["m10"] / M["m00"])
+                            cY = int(M["m01"] / M["m00"])
+                            position = (cX, cY)
+                            # Relax proximity check further if needed
+                            if position not in used_positions and all(
+                                np.sqrt((cX - up[0])**2 + (cY - up[1])**2) > 5 for up in used_positions
+                            ):
+                                icon_positions[icon_name] = position
+                                used_positions.add(position)
+                                logging.info(f"Detected {icon_name} at {position} (area: {cv2.contourArea(contour)})")
+                            else:
+                                logging.warning(f"Position for {icon_name} at {position} too close to another icon or already used (area: {cv2.contourArea(contour)})")
+                        else:
+                            logging.warning(f"No valid moments for {icon_name} contour")
+                    else:
+                        logging.warning(f"Contour for {icon_name} too small (area: {cv2.contourArea(contour)})")
             else:
-                logging.error(f"No matches for {icon_name}")
+                logging.warning(f"No contours found for {icon_name}")
 
-        debug_img = cv2.cvtColor(captcha_gray, cv2.COLOR_GRAY2BGR)
+        # Fallback for missing cart
+        if "cart" not in icon_positions and "star" in icon_positions and "calendar" in icon_positions:
+            logging.warning("Cart not detected, estimating position based on star and calendar")
+            star_x, star_y = icon_positions["star"]
+            cal_x, cal_y = icon_positions["calendar"]
+            # Estimate cart position as midpoint or offset
+            cart_x = (star_x + cal_x) // 2
+            cart_y = (star_y + cal_y) // 2 + 20  # Offset slightly below midpoint
+            position = (cart_x, cart_y)
+            if position not in used_positions and all(
+                np.sqrt((cart_x - up[0])**2 + (cart_y - up[1])**2) > 5 for up in used_positions
+            ):
+                icon_positions["cart"] = position
+                used_positions.add(position)
+                logging.info(f"Assigned fallback position for cart at {position}")
+
+        # Debug image with detected positions
+        debug_img = captcha_image.copy()
         for icon_name, pos in icon_positions.items():
             cv2.circle(debug_img, pos, 5, (0, 255, 0), -1)
             cv2.putText(debug_img, icon_name, (pos[0] + 10, pos[1]), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 1)
         cv2.imwrite(os.path.join(CAPTCHA_IMAGE_DIR, "debug_icon_positions.png"), debug_img)
 
         return icon_positions
+  
+  
 
     def preprocess_image(self, image):
-        if len(image.shape) > 2:
-            image = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
-        image = cv2.GaussianBlur(image, (3, 3), 0)
-        return image
+        if len(image.shape) != 3:
+            logging.error("Image is not a color image")
+            return {"star": np.zeros(image.shape, dtype=np.uint8),
+                    "calendar": np.zeros(image.shape, dtype=np.uint8),
+                    "cart": np.zeros(image.shape, dtype=np.uint8)}
 
+        # Convert hex colors to BGR (OpenCV format)
+        hex_to_bgr = {
+            "14ffd5": (213, 255, 20),  # #14FFD5 -> BGR: (20, 255, 213)
+            "00e0ff": (255, 224, 0),   # #00E0FF -> BGR: (255, 224, 0)
+            "6666ff": (255, 102, 102)  # #6666FF -> BGR: (255, 102, 102)
+        }
+
+        # Convert to HSV for color-based detection
+        hsv = cv2.cvtColor(image, cv2.COLOR_BGR2HSV)
+        
+        # Define precise HSV ranges for each icon
+        icon_hsv_ranges = {
+            "cart": ([82, 80, 80], [88, 255, 255]),      # #14FFD5 (H: ~85)
+            "star": ([88, 80, 80], [94, 255, 255]),      # #00E0FF (H: ~91)
+            "calendar": ([115, 80, 80], [125, 255, 255]) # #6666FF (H: ~120)
+        }
+
+        icon_masks = {}
+        for icon_name, (lower, upper) in icon_hsv_ranges.items():
+            lower = np.array(lower, dtype=np.uint8)
+            upper = np.array(upper, dtype=np.uint8)
+            mask = cv2.inRange(hsv, lower, upper)
+            # Use a small kernel for subtle noise reduction
+            kernel = np.ones((2, 2), np.uint8)
+            mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel, iterations=1)
+            mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel, iterations=1)
+            icon_masks[icon_name] = mask
+            logging.info(f"Processed mask for {icon_name}, min: {np.min(mask)}, max: {np.max(mask)}")
+
+        # Save combined mask for debugging
+        combined_mask = np.zeros_like(icon_masks["star"])
+        for mask in icon_masks.values():
+            combined_mask = cv2.bitwise_or(combined_mask, mask)
+        cv2.imwrite(os.path.join(CAPTCHA_IMAGE_DIR, "debug_combined_mask.png"), combined_mask)
+
+        # Save individual masks for debugging
+        for icon_name, mask in icon_masks.items():
+            cv2.imwrite(os.path.join(CAPTCHA_IMAGE_DIR, f"debug_mask_{icon_name}.png"), mask)
+
+        return icon_masks
     def extract_background_image_url(self, style):
         match = re.search(r"background-image:\s*url\(['\"]?(.*?)['\"]?\)", style)
         return match.group(1) if match else None
@@ -355,6 +378,7 @@ class CaptchaSolver:
         except:
             logging.info("Icon CAPTCHA is solved (CAPTCHA container gone).")
             return True
+
 def solve_captcha_and_submit(website_url, username, email, password):
     driver = webdriver.Chrome()
     try:
@@ -396,3 +420,5 @@ def solve_captcha_and_submit(website_url, username, email, password):
         time.sleep(10)
         driver.quit()
 
+if __name__ == "__main__":
+    solve_captcha_and_submit("https://example.com", "testuser", "test@example.com", "password123")
