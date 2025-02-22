@@ -4,7 +4,7 @@ from automate_captcha import solve_captcha_and_submit
 
 def start_solving():
     action = action_var.get()
-    website_url = website_entry.get()
+    username = username_entry.get()
     email = email_entry.get()
     password = password_entry.get()
 
@@ -12,10 +12,10 @@ def start_solving():
 
     try:
         if action == "Register":
-            solve_captcha_and_submit(website_url='https://faucetpay.io/account/register', username="adasdaasd", email="asdasdasd@adsdas.asd", password="asdasd123asd!@")
+            solve_captcha_and_submit(website_url='https://faucetpay.io/account/register', username="adasdaasd", email="asdasdasd@adsdas.asd", password="asdasd123asd!@",action=action)
         else:
-            solve_captcha_and_submit(website_url='https://faucetpay.io/account/login', email="adasdasd@adsdas.asd", password="asdasasd@!asda213d")
-        messagebox.showinfo("Success", "Form submitted successfully!")
+            solve_captcha_and_submit(website_url='https://faucetpay.io/account/login', username="adasdaasd", email="MEDHATJACH@GMAIL.COM", password="asdasasd@!asda213d",action=action)
+        # messagebox.showinfo("Success", "Form submitted successfully!")
     except Exception as e:
         messagebox.showerror("Error", f"Failed to submit the form: {e}")
 
@@ -50,11 +50,6 @@ action_label.grid(row=0, column=0, padx=10, pady=5, sticky="w")
 action_dropdown = ttk.Combobox(root, textvariable=action_var, values=["Register", "Login"], state="readonly")
 action_dropdown.grid(row=0, column=1, padx=10, pady=5, sticky="ew")
 action_dropdown.bind("<<ComboboxSelected>>", toggle_fields)
-
-# Website URL
-ttk.Label(root, text="Website URL:").grid(row=1, column=0, padx=10, pady=5, sticky="w")
-website_entry = ttk.Entry(root, width=40)
-website_entry.grid(row=1, column=1, padx=10, pady=5)
 
 # Username (for Register)
 username_label = ttk.Label(root, text="Username:")
