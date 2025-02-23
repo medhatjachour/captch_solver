@@ -17,17 +17,17 @@ def run_solver(action, username, email, password):
         if action == "Register":
             solve_captcha_and_submit(
                 website_url='https://faucetpay.io/account/register',
-                username="asdasdasd",
-                email="asdasdasd@adsasd.asda",
-                password="123asdasdASADAS.0@#!@$",
+                username=username,
+                email=email,
+                password=password,
                 action=action
             )
         else:
             solve_captcha_and_submit(
                 website_url='https://faucetpay.io/account/login',
-                username="asdasdad",
-                email="asdasd@asda.asd",
-                password="asdasdasdasd ",
+                username=username,
+                email=email,
+                password=password,
                 action=action
             )
         # Show success message in the main thread

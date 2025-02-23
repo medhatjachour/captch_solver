@@ -39,6 +39,19 @@ To use the CAPTCHA solver, follow these steps:
 1   -  
 ```bash
 python gui.py
+
 ```
+## Build a version
+To use the CAPTCHA solver, follow these steps:
+
+1   -  
+Extract chromedriver.exe (Windows) or chromedriver (macOS/Linux).
+Place ChromeDriver:Copy chromedriver.exe into the captch_solver folder next to gui.py.
+2- run 
+```bash
+ pyinstaller --onefile --windowed --add-data "chromedriver.exe;." gui.py
+
+```
+
 
 ## ############# FEEL FREE TO PLAY AS MUCH AS YOU WANT 
