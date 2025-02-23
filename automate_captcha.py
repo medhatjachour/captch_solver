@@ -177,20 +177,20 @@ class CaptchaSolver:
 
                 self.driver.execute_script("arguments[0].click();", apply_button)
 
-                time.sleep(4)
+                time.sleep(2)
 
                 if self.is_captcha_solvedImg():
                     logging.info("Icon CAPTCHA solved successfully.")
                     if TheAction == "Register":
                         logging.info("Clicking on Signup button.")
                         signup_button = WebDriverWait(self.driver, 10).until(
-                            EC.element_to_be_clickable((By.XPATH, "//button[text()='Sign Up']"))
+                            EC.element_to_be_clickable((By.XPATH,  "//button[.//span[text()='Sign up']]"))
                         )
                         self.driver.execute_script("arguments[0].click();", signup_button)
                     else:
                         logging.info("Clicking on Login button.")
                         login_button = WebDriverWait(self.driver, 10).until(
-                            EC.element_to_be_clickable((By.XPATH, "//button[text()='Login']"))
+                            EC.element_to_be_clickable((By.XPATH, "//button[.//span[text()='Log in']]"))
                         )
                         self.driver.execute_script("arguments[0].click();", login_button)
                     return True
@@ -386,14 +386,14 @@ class CaptchaSolver:
         try:
             time.sleep(5)
             WebDriverWait(self.driver, 5).until(
-                EC.presence_of_element_located((By.XPATH, "//div[span[text()=\"Apply\"]]"))
+                EC.presence_of_element_located((By.XPATH,  "//button[text()='Apply']"))
             )
-            logging.info("Icon CAPTCHA is not solved (CAPTCHA container still present).")
+            logging.info("con CAPTCHA is solved .")
             time.sleep(2)
-            return False
-        except:
-            logging.info("Icon CAPTCHA is solved (CAPTCHA container gone).")
             return True
+        except:
+            logging.info("Icon CAPTCHA is not solved.")
+            return False
 
 def solve_captcha_and_submit(website_url, username, email, password,action):
     driver = webdriver.Chrome()
