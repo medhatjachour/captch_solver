@@ -1,163 +1,119 @@
 import tkinter as tk
 from tkinter import ttk, messagebox
 import threading
-from automate_captcha import solve_captcha_and_submit
+from automate_captcha import CaptchaSolver  # We only need CaptchaSolver now
+import webbrowser
+from selenium import webdriver
 
-def start_solving():
-    action = action_var.get()
-    username = username_entry.get()
-    email = email_entry.get()
-    password = password_entry.get()
+class CaptchaSolverGUI:
+    def __init__(self, root):
+        self.root = root
+        self.root.title("CAPTCHA Solver")
+        self.root.geometry("300x200")
+        self.root.configure(bg="#f0f0f0")
+        self.driver = None
 
-    # Run the solving process in a separate thread to avoid blocking the GUI
-    threading.Thread(target=run_solver, args=(action, username, email, password), daemon=True).start()
+        # Style configuration
+        style = ttk.Style()
+        style.configure("TLabel", background="#f0f0f0", font=("Helvetica", 10))
+        style.configure("TButton", font=("Helvetica", 10))
+        style.configure("TCombobox", font=("Helvetica", 10))
 
-def run_solver(action, username, email, password):
-    try:
-        if action == "Register":
-            solve_captcha_and_submit(
-                website_url='https://faucetpay.io/account/register',
-                username=username,
-                email=email,
-                password=password,
-                action=action
-            )
-        else:
-            solve_captcha_and_submit(
-                website_url='https://faucetpay.io/account/login',
-                username=username,
-                email=email,
-                password=password,
-                action=action
-            )
-        # Show success message in the main thread
-        root.after(0, lambda: messagebox.showinfo("Success", "Form submitted successfully!"))
-    except Exception as e:
-        # Show error message in the main thread
-        root.after(0, lambda: messagebox.showerror("Error", f"Failed to submit the form: {e}"))
+        # Action Selection
+        self.action_var = tk.StringVar(value="Register")
+        action_label = ttk.Label(root, text="Action:")
+        action_label.grid(row=0, column=0, padx=10, pady=5, sticky="w")
+        self.action_dropdown = ttk.Combobox(root, textvariable=self.action_var, 
+                                          values=["Register", "Login"], 
+                                          state="readonly")
+        self.action_dropdown.grid(row=0, column=1, padx=10, pady=5, sticky="ew")
 
-def toggle_fields(event):
-    action = action_var.get()
-    if action == "Login":
-        username_label.grid_remove()
-        username_entry.grid_remove()
-        confirm_password_label.grid_remove()
-        confirm_password_entry.grid_remove()
-    else:
-        username_label.grid()
-        username_entry.grid()
-        confirm_password_label.grid()
-        confirm_password_entry.grid()
+        # Open Website Button
+        self.open_button = ttk.Button(root, text="Open Website", 
+                                    command=self.open_website)
+        self.open_button.grid(row=1, column=0, columnspan=2, pady=10)
 
-def open_new_session():
-    # Create a new top-level window
-    new_window = tk.Toplevel(root)
-    new_window.title("New CAPTCHA Solver Session")
-    new_window.geometry("400x350")
-    new_window.configure(bg="#f0f0f0")
+        # Solve CAPTCHA Button
+        self.solve_button = ttk.Button(root, text="Solve CAPTCHA", 
+                                     command=self.start_solving)
+        self.solve_button.grid(row=2, column=0, columnspan=2, pady=10)
 
-    # Copy the layout from the main window
-    action_var_new = tk.StringVar(value="Register")
-    action_label_new = ttk.Label(new_window, text="Action:")
-    action_label_new.grid(row=0, column=0, padx=10, pady=5, sticky="w")
-    action_dropdown_new = ttk.Combobox(new_window, textvariable=action_var_new, values=["Register", "Login"], state="readonly")
-    action_dropdown_new.grid(row=0, column=1, padx=10, pady=5, sticky="ew")
-    action_dropdown_new.bind("<<ComboboxSelected>>", lambda e: toggle_fields_new(e, new_window))
+        # Status Label
+        self.status_label = ttk.Label(root, text="Ready")
+        self.status_label.grid(row=3, column=0, columnspan=2, pady=5)
 
-    username_label_new = ttk.Label(new_window, text="Username:")
-    username_label_new.grid(row=2, column=0, padx=10, pady=5, sticky="w")
-    username_entry_new = ttk.Entry(new_window, width=40)
-    username_entry_new.grid(row=2, column=1, padx=10, pady=5)
+    def open_website(self):
+        """Opens the website and initializes the browser"""
+        if self.driver:
+            self.driver.quit()  # Close any existing browser instance
+        
+        action = self.action_var.get()
+        url = ("https://faucetpay.io/account/register" if action == "Register" 
+               else "https://faucetpay.io/account/login")
+        
+        self.driver = webdriver.Chrome()
+        self.driver.get(url)
+        self.status_label.config(text=f"Opened {action} page")
+        self.solve_button.config(state="normal")  # Ensure solve button is enabled
 
-    ttk.Label(new_window, text="Email:").grid(row=3, column=0, padx=10, pady=5, sticky="w")
-    email_entry_new = ttk.Entry(new_window, width=40)
-    email_entry_new.grid(row=3, column=1, padx=10, pady=5)
+    def start_solving(self):
+        """Starts the CAPTCHA solving process in a separate thread"""
+        if not self.driver:
+            messagebox.showwarning("Warning", "Please open the website first!")
+            return
 
-    ttk.Label(new_window, text="Password:").grid(row=4, column=0, padx=10, pady=5, sticky="w")
-    password_entry_new = ttk.Entry(new_window, width=40, show="*")
-    password_entry_new.grid(row=4, column=1, padx=10, pady=5)
+        self.status_label.config(text="Solving CAPTCHA...")
+        self.solve_button.config(state="disabled")
+        self.open_button.config(state="disabled")
+        
+        # Run solver in separate thread
+        threading.Thread(target=self.run_solver, daemon=True).start()
 
-    confirm_password_label_new = ttk.Label(new_window, text="Confirm Password:")
-    confirm_password_label_new.grid(row=5, column=0, padx=10, pady=5, sticky="w")
-    confirm_password_entry_new = ttk.Entry(new_window, width=40, show="*")
-    confirm_password_entry_new.grid(row=5, column=1, padx=10, pady=5)
+    def run_solver(self):
+        """Runs the CAPTCHA solver and updates GUI"""
+        try:
+            # Click the "I'm not a robot" checkbox
+            # self.driver.find_element(tk.By.XPATH, "//div[span[text()=\"I'm not a robot\"]]").click()
 
-    solve_button_new = ttk.Button(new_window, text="Submit Form", command=lambda: start_solving_new(new_window))
-    solve_button_new.grid(row=6, column=0, columnspan=2, pady=20)
+            solver = CaptchaSolver(self.driver)
+            
+            # Attempt to solve slider CAPTCHA if present
+            slider_solved = solver.solve_slider_captcha()
+            if not slider_solved:
+                raise Exception("Failed to solve slider CAPTCHA")
+            
+            # Attempt to solve icon CAPTCHA if present
+            icon_solved = solver.solve_icon_captcha()
+            if not icon_solved:
+                raise Exception("Failed to solve icon CAPTCHA")
 
-    # Initial field visibility
-    toggle_fields_new(None, new_window)
+            # Update GUI from main thread
+            self.root.after(0, lambda: [
+                messagebox.showinfo("Success", "CAPTCHA solved successfully! Browser remains open."),
+                self.status_label.config(text="CAPTCHA Solved"),
+                self.solve_button.config(state="normal"),
+                self.open_button.config(state="normal")
+            ])
+            
+        except Exception as e:
+            # Update GUI with error from main thread
+            self.root.after(0, lambda: [
+                messagebox.showerror("Error", f"Failed to solve CAPTCHA"),
+                self.status_label.config(text="Error occurred"),
+                self.solve_button.config(state="normal"),
+                self.open_button.config(state="normal")
+            ])
+            print(e)
 
-def toggle_fields_new(event, window):
-    action = window.children['!combobox'].get()
-    if action == "Login":
-        window.children['!label2'].grid_remove()
-        window.children['!entry'].grid_remove()
-        window.children['!label4'].grid_remove()
-        window.children['!entry3'].grid_remove()
-    else:
-        window.children['!label2'].grid()
-        window.children['!entry'].grid()
-        window.children['!label4'].grid()
-        window.children['!entry3'].grid()
+    def __del__(self):
+        """Cleanup method to ensure browser closes when GUI is closed"""
+        if self.driver:
+            self.driver.quit()
 
-def start_solving_new(window):
-    action = window.children['!combobox'].get()
-    username = window.children['!entry'].get()
-    email = window.children['!entry2'].get()
-    password = window.children['!entry3'].get() if action == "Register" else window.children['!entry2'].get()
+def main():
+    root = tk.Tk()
+    app = CaptchaSolverGUI(root)
+    root.mainloop()
 
-    # Run the solving process in a separate thread
-    threading.Thread(target=run_solver, args=(action, username, email, password), daemon=True).start()
-
-# Main window setup
-root = tk.Tk()
-root.title("CAPTCHA Solver")
-root.geometry("400x350")
-root.configure(bg="#f0f0f0")
-
-# Style
-style = ttk.Style()
-style.configure("TLabel", background="#f0f0f0", font=("Helvetica", 10))
-style.configure("TButton", font=("Helvetica", 10))
-style.configure("TCombobox", font=("Helvetica", 10))
-
-# Action Selection
-action_var = tk.StringVar(value="Register")
-action_label = ttk.Label(root, text="Action:")
-action_label.grid(row=0, column=0, padx=10, pady=5, sticky="w")
-action_dropdown = ttk.Combobox(root, textvariable=action_var, values=["Register", "Login"], state="readonly")
-action_dropdown.grid(row=0, column=1, padx=10, pady=5, sticky="ew")
-action_dropdown.bind("<<ComboboxSelected>>", toggle_fields)
-
-# Username (for Register)
-username_label = ttk.Label(root, text="Username:")
-username_label.grid(row=2, column=0, padx=10, pady=5, sticky="w")
-username_entry = ttk.Entry(root, width=40)
-username_entry.grid(row=2, column=1, padx=10, pady=5)
-
-# Email
-ttk.Label(root, text="Email:").grid(row=3, column=0, padx=10, pady=5, sticky="w")
-email_entry = ttk.Entry(root, width=40)
-email_entry.grid(row=3, column=1, padx=10, pady=5)
-
-# Password
-ttk.Label(root, text="Password:").grid(row=4, column=0, padx=10, pady=5, sticky="w")
-password_entry = ttk.Entry(root, width=40, show="*")
-password_entry.grid(row=4, column=1, padx=10, pady=5)
-
-# Confirm Password (for Register)
-confirm_password_label = ttk.Label(root, text="Confirm Password:")
-confirm_password_label.grid(row=5, column=0, padx=10, pady=5, sticky="w")
-confirm_password_entry = ttk.Entry(root, width=40, show="*")
-confirm_password_entry.grid(row=5, column=1, padx=10, pady=5)
-
-# Submit Button
-solve_button = ttk.Button(root, text="Submit Form", command=start_solving)
-solve_button.grid(row=6, column=0, pady=20)
-
-# New Session Button
-new_session_button = ttk.Button(root, text="New Session", command=open_new_session)
-new_session_button.grid(row=6, column=1, pady=20)
-
-root.mainloop()
+if __name__ == "__main__":
+    main()
