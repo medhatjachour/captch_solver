@@ -15,7 +15,6 @@ import random
 import re
 from detect_puzzle import GeeTestIdentifier  # Assuming this is a custom module
 
-global TheAction
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
@@ -181,18 +180,19 @@ class CaptchaSolver:
 
                 if self.is_captcha_solvedImg():
                     logging.info("Icon CAPTCHA solved successfully.")
-                    if TheAction == "Register":
-                        logging.info("Clicking on Signup button.")
-                        signup_button = WebDriverWait(self.driver, 10).until(
-                            EC.element_to_be_clickable((By.XPATH,  "//button[.//span[text()='Sign up']]"))
-                        )
-                        self.driver.execute_script("arguments[0].click();", signup_button)
-                    else:
-                        logging.info("Clicking on Login button.")
-                        login_button = WebDriverWait(self.driver, 10).until(
-                            EC.element_to_be_clickable((By.XPATH, "//button[.//span[text()='Log in']]"))
-                        )
-                        self.driver.execute_script("arguments[0].click();", login_button)
+                    max_retries = 6
+                #     if TheAction == "Register":
+                #         logging.info("Clicking on Signup button.")
+                #         signup_button = WebDriverWait(self.driver, 10).until(
+                #             EC.element_to_be_clickable((By.XPATH,  "//button[.//span[text()='Sign up']]"))
+                #         )
+                #         self.driver.execute_script("arguments[0].click();", signup_button)
+                #     else:
+                #         logging.info("Clicking on Login button.")
+                #         login_button = WebDriverWait(self.driver, 10).until(
+                #             EC.element_to_be_clickable((By.XPATH, "//button[.//span[text()='Log in']]"))
+                #         )
+                #         self.driver.execute_script("arguments[0].click();", login_button)
                     return True
 
                 else:
@@ -384,73 +384,14 @@ class CaptchaSolver:
 
     def is_captcha_solvedImg(self):
         try:
-            time.sleep(5)
+            time.sleep(2)
             WebDriverWait(self.driver, 5).until(
-                EC.presence_of_element_located((By.XPATH,  "//button[text()='Apply']"))
+                EC.presence_of_element_located((By.XPATH, "//div[contains(@style, 'width: 372px; height: 476px; position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); background-color: rgb(22, 25, 29); padding: 24px 27px; border-radius: 22px; box-sizing: border-box; overflow: hidden; font-family: &quot;Plus Jakarta Sans&quot;, sans-serif; user-select: none; transition: height 0.5s cubic-bezier(0.4, 2.5, 0.4, 0.6);')]"))
             )
-            logging.info("con CAPTCHA is solved .")
+            logging.info("CAPTCHA is not solved.")
             time.sleep(2)
-            return True
-        except:
-            logging.info("Icon CAPTCHA is not solved.")
             return False
+        except:
+            logging.info("CAPTCHA is solved.")
+            return True
 
-def solve_captcha_and_submit(website_url, username, email, password,action):
-    driver = webdriver.Chrome()
-    global TheAction
-    TheAction = action
-    logging.info(action)
-    logging.info("Opening website...")
-    driver.get(website_url)
-
-    try:
-        if action == "Register":
-            logging.info("Filling the form...")
-            WebDriverWait(driver, 10).until(
-                EC.presence_of_element_located((By.XPATH, "//input[@placeholder='Enter your user name']"))
-            )
-            driver.find_element(By.XPATH, "//input[@placeholder='Enter your user name']").send_keys(username)
-            driver.find_element(By.XPATH, "//button[text()='Сontinue']").click()
-            time.sleep(2)
-
-            driver.find_element(By.XPATH, "//input[@placeholder='Enter your email here']").send_keys(email)
-            driver.find_element(By.XPATH, "//button[text()='Сontinue']").click()
-            time.sleep(2)
-
-            driver.find_element(By.XPATH, "//input[@placeholder='Enter password here']").send_keys(password)
-            driver.find_element(By.XPATH, "//input[@placeholder='Repeat password']").send_keys(password)
-            driver.find_element(By.XPATH, "//button[text()='Сontinue']").click()
-        
-        else:
-            logging.info("Filling the form...")
-            WebDriverWait(driver, 10).until(
-                EC.presence_of_element_located((By.XPATH, "//input[@placeholder='Enter your email here']"))
-            )
-            driver.find_element(By.XPATH, "//input[@placeholder='Enter your email here']").send_keys(email)
-            driver.find_element(By.XPATH, "//button[text()='Сontinue']").click()
-            time.sleep(2)
-            driver.find_element(By.XPATH, "//input[@placeholder='Enter your password here']").send_keys(password)
-            # driver.find_element(By.XPATH, "//button[text()='Сontinue']").click()
-        
-        time.sleep(2)
-        driver.find_element(By.XPATH, "//div[span[text()=\"I'm not a robot\"]]").click()
-
-        time.sleep(5)
-
-        solver = CaptchaSolver(driver)
-        if not solver.solve_slider_captcha():
-            logging.error("Slider CAPTCHA failed, aborting.")
-            return
-        if not solver.solve_icon_captcha():
-            logging.error("Icon CAPTCHA failed, aborting.")
-            return
-
-    except Exception as e:
-        logging.error(f"An error occurred: {e}")
-    finally:
-        logging.info("Closing the browser...")
-        time.sleep(10)
-        driver.quit()
-
-if __name__ == "__main__":
-    solve_captcha_and_submit("https://example.com", "testuser", "test@example.com", "password123")
