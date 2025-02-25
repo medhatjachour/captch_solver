@@ -5,6 +5,7 @@ from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.common.action_chains import ActionChains
+from selenium.common.exceptions import TimeoutException
 import time
 import base64
 import os
@@ -181,6 +182,7 @@ class CaptchaSolver:
                 if self.is_captcha_solvedImg():
                     logging.info("Icon CAPTCHA solved successfully.")
                     max_retries = 6
+                    logging.info(f"CAPTCHA solved successfully. {max_retries}")
                 #     if TheAction == "Register":
                 #         logging.info("Clicking on Signup button.")
                 #         signup_button = WebDriverWait(self.driver, 10).until(
@@ -316,8 +318,6 @@ class CaptchaSolver:
 
         return icon_positions
   
-  
-
     def preprocess_image(self, image):
         if len(image.shape) != 3:
             logging.error("Image is not a color image")
@@ -382,16 +382,19 @@ class CaptchaSolver:
             logging.error(f"Failed to download CAPTCHA image: {e}")
         return None
 
+
+
+
+
     def is_captcha_solvedImg(self):
         try:
             time.sleep(2)
-            WebDriverWait(self.driver, 5).until(
-                EC.presence_of_element_located((By.XPATH, "//div[contains(@style, 'width: 372px; height: 476px; position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); background-color: rgb(22, 25, 29); padding: 24px 27px; border-radius: 22px; box-sizing: border-box; overflow: hidden; font-family: &quot;Plus Jakarta Sans&quot;, sans-serif; user-select: none; transition: height 0.5s cubic-bezier(0.4, 2.5, 0.4, 0.6);')]"))
-            )
+            WebDriverWait(self.driver, 10).until(
+                    EC.element_to_be_clickable((By.XPATH, "//button[text()='Apply']"))
+                )
             logging.info("CAPTCHA is not solved.")
             time.sleep(2)
             return False
         except:
             logging.info("CAPTCHA is solved.")
             return True
-
